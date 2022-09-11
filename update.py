@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass
+from fnmatch import fnmatch
 import re
 import shutil
 import subprocess
@@ -57,13 +58,12 @@ async def confirm_next():
 
 
 async def download_build(fn, url):
-    # # urllib.request.urlretrieve(url, fn)
-    # client = httpx.AsyncClient(follow_redirects=True)
-    # async with client.stream("GET", url) as r:
-    #     with open(fn, "wb") as f:
-    #         async for chunk in r.aiter_bytes():
-    #             f.write(chunk)
-    await asyncio.sleep(1)
+    # urllib.request.urlretrieve(url, fn)
+    client = httpx.AsyncClient(follow_redirects=True)
+    async with client.stream("GET", url) as r:
+        with open(fn, "wb") as f:
+            async for chunk in r.aiter_bytes():
+                f.write(chunk)
 
 
 async def pick_device_serial():
@@ -161,12 +161,15 @@ def extract_bootimg(fn):
 async def patch_bootimg(serial):
     adb = ["adb", "-s", serial]
     await check_call(adb + ["push", "boot.img", "/sdcard/Download/boot.img"])
-    # TODO: this seems to produce an image not identical to the Magisk app patcher. find out what's different about it.
+    # Magisk app "Patch file method" seems to have KEEPFORCEENCRYPT=true and KEEPVERITY=true
+    # when setting these two, the patched boot image is identical to the one created by the app
     await check_call(
         adb
         + [
             "shell",
             "KEEPFORCEENCRYPT=true",
+            # "PATCHVBMETAFLAG=true",
+            "KEEPVERITY=true",
             "/data/adb/magisk/boot_patch.sh",
             "/sdcard/Download/boot.img",
         ]
@@ -183,9 +186,62 @@ async def patch_bootimg(serial):
     await check_call(adb + ["pull", "/sdcard/Download/patched-boot.img"])
 
 
+async def adb_reboot_sideload(serial):
+    adb = ["adb", "-s", serial]
+
+    print("Rebooting to adb sideload mode.")
+    await check_call(adb + ["reboot", "sideload"])
+
+    while True:
+        # wait at least 3 seconds between ADB calls
+        await asyncio.create_task(asyncio.sleep(3))
+
+        print("Waiting for device to enter adb sideload mode ...")
+        stdout, _ = await check_call(["adb", "devices"], capture_stdout=True)
+
+        for line in stdout.decode("utf-8").splitlines():
+            line = line.strip()
+            if re.match(f"{serial}\tsideload", line):
+                return
+
+
+async def adb_install_update(serial, fn):
+    adb = ["adb", "-s", serial]
+    await check_call(adb + ["sideload", fn])
+
+
+async def adb_reboot_bootloader(serial):
+    adb = ["adb", "-s", serial]
+
+    print("Rebooting to adb sideload mode.")
+    await check_call(adb + ["reboot", "bootloader"])
+
+    while True:
+        # wait at least 3 seconds between ADB calls
+        await asyncio.create_task(asyncio.sleep(3))
+
+        print("Waiting for device to enter fastboot mode ...")
+        stdout, _ = await check_call(["fastboot", "devices"], capture_stdout=True)
+
+        for line in stdout.decode("utf-8").splitlines():
+            line = line.strip()
+            if re.match(f"{serial} fastboot", line):
+                return
+
+
+async def fb_install_bootimg(serial):
+    await check_call(["fastboot", "-s", serial, "flash", "boot", "patched-boot.img"])
+
+
+async def fb_reboot_system(serial):
+    await check_call(["fastboot", "-s", serial, "reboot"])
+
+
 async def main():
-    url = "https://mirrorbits.lineageos.org/full/beryllium/20220910/lineage-19.1-20220910-nightly-beryllium-signed.zip"
-    fn = Path("lineage-19.1-20220910-nightly-beryllium-signed.zip")
+    # url = "https://mirrorbits.lineageos.org/full/beryllium/20220910/lineage-19.1-20220910-nightly-beryllium-signed.zip"
+    # fn = Path("lineage-19.1-20220910-nightly-beryllium-signed.zip")
+    url = "https://mirrorbits.lineageos.org/full/beryllium/20220903/lineage-19.1-20220903-nightly-beryllium-signed.zip"
+    fn = Path("lineage-19.1-20220903-nightly-beryllium-signed.zip")
     # url = "https://mirrorbits.lineageos.org/recovery/beryllium/20220910/lineage-19.1-20220910-recovery-beryllium.img"
     # fn = "lineage-19.1-20220910-recovery-beryllium.img"
 
@@ -194,18 +250,42 @@ async def main():
         dl_task = None
     else:
         print("Starting OTA zip download in the background.")
-        dl_task = asyncio.create_task(download_build())
+        dl_task = asyncio.create_task(download_build(fn, url))
 
     serial = await pick_device_serial()
     await adb_root(serial)
-
-    extract_bootimg(fn)
-    await patch_bootimg(serial)
 
     if dl_task is not None:
         print("Waiting for download ... ", end="", flush=True)
         await dl_task
         print("finished.")
+        await asyncio.sleep(1)
+
+    print("Extracting and patching boot image ...")
+    extract_bootimg(fn)
+    await patch_bootimg(serial)
+
+    print(
+        "Received Magisk-patched boot image from phone.",
+        "Next step is rebooting to recovery in adb sideload mode and install the OTA zip.",
+    )
+    await aioconsole.ainput("Press Enter to continue")
+
+    await adb_reboot_sideload(serial)
+    print("Installing OTA zip:", fn)
+    await adb_install_update(serial, fn)
+
+    await asyncio.sleep(2)
+    await aioconsole.ainput(
+        "ADB sideload command has finished. Press Enter to reboot to fastboot."
+    )
+    await adb_reboot_bootloader(serial)
+    print("Flashing Magisk-patched boot image: patched-boot.img")
+    await fb_install_bootimg(serial)
+    print("Finished flashing boot image. Rebooting in 2 seconds.")
+    await aioconsole.ainput("Press Enter to reboot to android.")
+    await asyncio.sleep(2)
+    await fb_reboot_system(serial)
 
 
 if __name__ == "__main__":
