@@ -1,16 +1,13 @@
 import asyncio
 from dataclasses import dataclass
-from fnmatch import fnmatch
 import re
 import shutil
-import subprocess
-import sys
 from typing import Tuple
 import zipfile
 from pathlib import Path
 
 import httpx
-import aioconsole
+from aioconsole import ainput, aprint
 
 
 @dataclass(frozen=True)
@@ -44,7 +41,7 @@ async def query_yes_no(question, default="yes"):
         raise ValueError("invalid default answer: '%s'" % default)
 
     while True:
-        choice = (await aioconsole.ainput(question + prompt)).lower()
+        choice = (await ainput(question + prompt)).lower()
         if default is not None and choice == "":
             return default
         elif choice in valid.keys():
@@ -54,7 +51,7 @@ async def query_yes_no(question, default="yes"):
 
 
 async def confirm_next():
-    await aioconsole.ainput("Press Enter to continue...")
+    await ainput("Press Enter to continue...")
 
 
 async def download_build(fn, url):
@@ -63,31 +60,19 @@ async def download_build(fn, url):
     async with client.stream("GET", url) as r:
         with open(fn, "wb") as f:
             async for chunk in r.aiter_bytes():
-                f.write(chunk)
+                await asyncio.to_thread(f.write, chunk)
 
 
 async def pick_device_serial():
     print()
     print("Querying devices with ADB ...")
     while True:
-        proc: asyncio.subprocess.Process = await asyncio.create_subprocess_exec(
-            *["adb", "devices"],
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            print(stderr)
-            raise RuntimeError(
-                "ADB terminated with non-zero exit code. stderr was printed."
-            )
+        stdout, _ = await check_call(["adb", "devices"], capture_stdout=True)
 
         # wait at least 3 seconds between ADB calls
         delay = asyncio.create_task(asyncio.sleep(3))
 
-        for line in stdout.decode("utf-8").splitlines():
+        for line in stdout.splitlines():
             line = line.strip()
             if m := re.match(r"([0-9a-f]+)\tdevice", line):
                 print(f"ADB found device with serial {m.group(1)}")
@@ -147,7 +132,7 @@ async def adb_root(serial: str):
             "Could not acquire root access.",
             "Make sure you've enabled ADB root mode in Developer Settings.",
         )
-        await aioconsole.ainput("Press Enter to try again ...")
+        await ainput("Press Enter to try again ...")
 
 
 def extract_bootimg(fn):
@@ -271,21 +256,22 @@ async def main():
         "Received Magisk-patched boot image from phone.",
         "Next step is rebooting to recovery in adb sideload mode and install the OTA zip.",
     )
-    await aioconsole.ainput("Press Enter to continue")
+    await ainput("Press Enter to continue")
 
     await adb_reboot_sideload(serial)
     print("Installing OTA zip:", fn)
     await adb_install_update(serial, fn)
-    await asyncio.sleep(2)
-    print("ADB sideload command has finished. Please reboot to fastboot/bootloader now")
+    await asyncio.sleep(3)
+    print(
+        "ADB sideload command has finished. Please enter fastboot mode now, or reboot to bootloader."
+    )
 
-    await aioconsole.ainput("Press Enter to continue.")
     await wait_for_fastboot(serial)
     print("Flashing Magisk-patched boot image: patched-boot.img")
     await fb_install_bootimg(serial)
     print("Finished flashing boot image.")
 
-    await aioconsole.ainput("Press Enter to reboot to android.")
+    await ainput("Press Enter to reboot to android.")
     await asyncio.sleep(2)
     await fb_reboot_system(serial)
 
