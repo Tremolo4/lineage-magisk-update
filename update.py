@@ -224,7 +224,7 @@ async def wait_for_fastboot(serial):
 
         for line in stdout.splitlines():
             line = line.strip()
-            if re.match(f"{serial} fastboot", line):
+            if re.match(f"{serial}\tfastboot", line):
                 return
 
         # wait at least 3 seconds between ADB calls
