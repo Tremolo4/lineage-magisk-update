@@ -213,13 +213,12 @@ async def adb_install_update(serial, fn):
 async def adb_reboot_bootloader(serial):
     adb = ["adb", "-s", serial]
 
-    print("Rebooting to adb sideload mode.")
+    print("Rebooting to fastboot mode.")
     await check_call(adb + ["reboot", "bootloader"])
 
-    while True:
-        # wait at least 3 seconds between ADB calls
-        await asyncio.create_task(asyncio.sleep(3))
 
+async def wait_for_fastboot(serial):
+    while True:
         print("Waiting for device to enter fastboot mode ...")
         stdout, _ = await check_call(["fastboot", "devices"], capture_stdout=True)
 
@@ -227,6 +226,9 @@ async def adb_reboot_bootloader(serial):
             line = line.strip()
             if re.match(f"{serial} fastboot", line):
                 return
+
+        # wait at least 3 seconds between ADB calls
+        await asyncio.create_task(asyncio.sleep(3))
 
 
 async def fb_install_bootimg(serial):
@@ -274,15 +276,15 @@ async def main():
     await adb_reboot_sideload(serial)
     print("Installing OTA zip:", fn)
     await adb_install_update(serial, fn)
-
     await asyncio.sleep(2)
-    await aioconsole.ainput(
-        "ADB sideload command has finished. Press Enter to reboot to fastboot."
-    )
-    await adb_reboot_bootloader(serial)
+    print("ADB sideload command has finished. Please reboot to fastboot/bootloader now")
+
+    await aioconsole.ainput("Press Enter to continue.")
+    await wait_for_fastboot(serial)
     print("Flashing Magisk-patched boot image: patched-boot.img")
     await fb_install_bootimg(serial)
-    print("Finished flashing boot image. Rebooting in 2 seconds.")
+    print("Finished flashing boot image.")
+
     await aioconsole.ainput("Press Enter to reboot to android.")
     await asyncio.sleep(2)
     await fb_reboot_system(serial)
