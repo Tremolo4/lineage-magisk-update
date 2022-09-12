@@ -5,8 +5,8 @@ import shutil
 from typing import Tuple
 import zipfile
 from pathlib import Path
+import urllib.request
 
-import httpx
 from aioconsole import ainput, aprint
 
 
@@ -50,17 +50,46 @@ async def query_yes_no(question, default="yes"):
             print("Please respond with 'yes' or 'no' " "(or 'y' or 'n').")
 
 
-async def confirm_next():
-    await ainput("Press Enter to continue...")
+def download_file(fn, url):
+    urllib.request.urlretrieve(url, fn)
+    # client = httpx.AsyncClient(follow_redirects=True)
+    # async with client.stream("GET", url) as r:
+    #     with open(fn, "wb") as f:
+    #         async for chunk in r.aiter_bytes():
+    #             await asyncio.to_thread(f.write, chunk)
 
 
-async def download_build(fn, url):
-    # urllib.request.urlretrieve(url, fn)
-    client = httpx.AsyncClient(follow_redirects=True)
-    async with client.stream("GET", url) as r:
-        with open(fn, "wb") as f:
-            async for chunk in r.aiter_bytes():
-                await asyncio.to_thread(f.write, chunk)
+def download_if_not_exists(fn: Path, url: str):
+    if not fn.is_file():
+        download_file(fn, url)
+
+
+async def do_downloads(
+    fn: Path,
+    url: str,
+    recovery_done: asyncio.Event,
+    fn_r: Path = None,
+    url_r: str = None,
+):
+    """Download recovery image, specified by fn_r and url_r (if given).
+    When that's done (or immediately) set the recovery_done event.
+    Then download the OTA zip, specified by fn and url."""
+
+    skip_ota = fn.is_file()
+    if skip_ota:
+        print("File exists, skipping download of OTA zip")
+
+    if url_r is not None:
+        if fn_r.is_file():
+            print("File exists, skipping download of recovery")
+        print("Downloading recovery image and OTA zip in the background.")
+        await asyncio.to_thread(download_if_not_exists, fn_r, url_r)
+    else:
+        print("Downloading OTA zip in the background.")
+    recovery_done.set()
+
+    if not skip_ota:
+        await asyncio.to_thread(download_if_not_exists, fn, url)
 
 
 async def pick_device_serial():
@@ -80,7 +109,8 @@ async def pick_device_serial():
                     return m.group(1)
             elif m := re.match(r"([0-9a-f]+)\tunauthorized", line):
                 print(
-                    f"ADB found unauthorized device with serial {m.group(1)}. Make sure to confirm ADB authorization from this computer."
+                    f"ADB found unauthorized device with serial {m.group(1)}.",
+                    "Make sure to confirm ADB authorization from this computer.",
                 )
         print(
             "No more devices found.",
@@ -224,29 +254,54 @@ async def fb_reboot_system(serial):
     await check_call(["fastboot", "-s", serial, "reboot"])
 
 
+async def adb_update_recovery(serial, fn_r):
+    adb = ["adb", "-s", serial]
+    print("Transferring recovery image ...")
+    await check_call(adb + ["push", fn_r, f"/sdcard/Download/{fn_r}"])
+    print("Flashing recovery image ...")
+    await check_call(
+        adb
+        + [
+            "shell",
+            "dd",
+            f"if=/sdcard/Download/{fn_r}",
+            "of=/dev/block/by-name/recovery",
+        ]
+    )
+    print("Recovery update finished.")
+
+
 async def main():
     url = "https://mirrorbits.lineageos.org/full/beryllium/20220910/lineage-19.1-20220910-nightly-beryllium-signed.zip"
     fn = Path("lineage-19.1-20220910-nightly-beryllium-signed.zip")
-    # url = "https://mirrorbits.lineageos.org/full/beryllium/20220903/lineage-19.1-20220903-nightly-beryllium-signed.zip"
-    # fn = Path("lineage-19.1-20220903-nightly-beryllium-signed.zip")
-    # url = "https://mirrorbits.lineageos.org/recovery/beryllium/20220910/lineage-19.1-20220910-recovery-beryllium.img"
-    # fn = "lineage-19.1-20220910-recovery-beryllium.img"
 
-    if fn.is_file():
-        print("File exists, skipping download.")
-        dl_task = None
+    if await query_yes_no("Do you want to update the recovery as well?") == "yes":
+        update_recovery = True
+        url_r = "https://mirrorbits.lineageos.org/recovery/beryllium/20220910/lineage-19.1-20220910-recovery-beryllium.img"
+        fn_r = Path("lineage-19.1-20220910-recovery-beryllium.img")
     else:
-        print("Starting OTA zip download in the background.")
-        dl_task = asyncio.create_task(download_build(fn, url))
+        update_recovery = False
+        url_r = None
+        fn_r = None
+
+    recovery_done = asyncio.Event()
+    dl_task = asyncio.create_task(do_downloads(fn, url, recovery_done, fn_r, url_r))
 
     serial = await pick_device_serial()
     await adb_root(serial)
 
-    if dl_task is not None:
-        print("Waiting for download ... ", end="", flush=True)
-        await dl_task
+    if update_recovery:
+        print("Waiting for recovery download ...", end="", flush=True)
+        await recovery_done.wait()
         print("finished.")
+        await ainput("Press Enter to continue with recovery flash")
+        await adb_update_recovery(serial, fn_r)
         await asyncio.sleep(1)
+
+    print("Waiting for OTA download ... ", end="", flush=True)
+    await dl_task
+    print("finished.")
+    await asyncio.sleep(1)
 
     print("Extracting and patching boot image ...")
     extract_bootimg(fn)
