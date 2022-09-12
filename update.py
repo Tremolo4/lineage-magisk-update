@@ -240,10 +240,10 @@ async def fb_reboot_system(serial):
 
 
 async def main():
-    # url = "https://mirrorbits.lineageos.org/full/beryllium/20220910/lineage-19.1-20220910-nightly-beryllium-signed.zip"
-    # fn = Path("lineage-19.1-20220910-nightly-beryllium-signed.zip")
-    url = "https://mirrorbits.lineageos.org/full/beryllium/20220903/lineage-19.1-20220903-nightly-beryllium-signed.zip"
-    fn = Path("lineage-19.1-20220903-nightly-beryllium-signed.zip")
+    url = "https://mirrorbits.lineageos.org/full/beryllium/20220910/lineage-19.1-20220910-nightly-beryllium-signed.zip"
+    fn = Path("lineage-19.1-20220910-nightly-beryllium-signed.zip")
+    # url = "https://mirrorbits.lineageos.org/full/beryllium/20220903/lineage-19.1-20220903-nightly-beryllium-signed.zip"
+    # fn = Path("lineage-19.1-20220903-nightly-beryllium-signed.zip")
     # url = "https://mirrorbits.lineageos.org/recovery/beryllium/20220910/lineage-19.1-20220910-recovery-beryllium.img"
     # fn = "lineage-19.1-20220910-recovery-beryllium.img"
 
