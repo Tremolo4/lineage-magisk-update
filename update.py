@@ -199,7 +199,7 @@ async def adb_reboot_sideload(serial):
         print("Waiting for device to enter adb sideload mode ...")
         stdout, _ = await check_call(["adb", "devices"], capture_stdout=True)
 
-        for line in stdout.decode("utf-8").splitlines():
+        for line in stdout.splitlines():
             line = line.strip()
             if re.match(f"{serial}\tsideload", line):
                 return
@@ -223,7 +223,7 @@ async def adb_reboot_bootloader(serial):
         print("Waiting for device to enter fastboot mode ...")
         stdout, _ = await check_call(["fastboot", "devices"], capture_stdout=True)
 
-        for line in stdout.decode("utf-8").splitlines():
+        for line in stdout.splitlines():
             line = line.strip()
             if re.match(f"{serial} fastboot", line):
                 return
