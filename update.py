@@ -113,7 +113,7 @@ async def do_downloads(
     if skip_ota:
         print("File exists, skipping download of OTA zip")
 
-    if info.url_r is not None:
+    if update_recovery:
         if info.fn_r.is_file():
             print("File exists, skipping download of recovery")
         print("Downloading recovery image and OTA zip in the background.")
