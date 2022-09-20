@@ -353,7 +353,8 @@ async def main():
     await adb_install_update(serial, info.fn)
     await asyncio.sleep(3)
     print(
-        "ADB sideload command has finished. Please enter fastboot mode now, or reboot to bootloader."
+        "ADB sideload command has finished.",
+        "Please enter fastboot mode now, or reboot to bootloader.",
     )
 
     await wait_for_fastboot(serial)
@@ -364,6 +365,14 @@ async def main():
     await ainput("Press Enter to reboot to android.")
     await asyncio.sleep(2)
     await fb_reboot_system(serial)
+
+    Path("boot.img").unlink(True)
+    Path("patched-boot.img").unlink(True)
+
+    msg = "Do you want to delete the downloaded OTA zip (and recovery image)?"
+    if await query_yes_no(msg) == "yes":
+        info.fn.unlink(True)
+        info.fn_r.unlink(True)
 
 
 if __name__ == "__main__":
