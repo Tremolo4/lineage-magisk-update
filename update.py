@@ -3,12 +3,11 @@ from dataclasses import dataclass
 import json
 import re
 import shutil
+import threading
 from typing import Tuple
 import zipfile
 from pathlib import Path
 import urllib.request
-
-from aioconsole import ainput, aprint
 
 LINEAGEOS_DOWNLOADS = "https://mirrorbits.lineageos.org"
 DEVICE = "beryllium"
@@ -45,7 +44,7 @@ async def query_yes_no(question, default="yes"):
         raise ValueError("invalid default answer: '%s'" % default)
 
     while True:
-        choice = (await ainput(question + prompt)).lower()
+        choice = (input(question + prompt)).lower()
         if default is not None and choice == "":
             return default
         elif choice in valid.keys():
@@ -100,9 +99,9 @@ def download_if_not_exists(fn: Path, url: str):
         download_file(fn, url)
 
 
-async def do_downloads(
+def do_downloads(
     info: BuildInfo,
-    recovery_done: asyncio.Event,
+    recovery_done: threading.Event,
     update_recovery: bool,
 ):
     """Download recovery image, if update_recovery is True.
@@ -117,13 +116,13 @@ async def do_downloads(
         if info.fn_r.is_file():
             print("File exists, skipping download of recovery")
         print("Downloading recovery image and OTA zip in the background.")
-        await asyncio.to_thread(download_if_not_exists, info.fn_r, info.url_r)
+        download_if_not_exists(info.fn_r, info.url_r)
     else:
         print("Downloading OTA zip in the background.")
     recovery_done.set()
 
     if not skip_ota:
-        await asyncio.to_thread(download_if_not_exists, info.fn, info.url)
+        download_if_not_exists(info.fn, info.url)
 
 
 async def pick_device_serial():
@@ -198,7 +197,7 @@ async def adb_root(serial: str):
             "Could not acquire root access.",
             "Make sure you've enabled ADB root mode in Developer Settings.",
         )
-        await ainput("Press Enter to try again ...")
+        input("Press Enter to try again ...")
 
 
 def extract_bootimg(fn):
@@ -319,8 +318,14 @@ async def main():
     else:
         update_recovery = False
 
-    recovery_done = asyncio.Event()
-    dl_task = asyncio.create_task(do_downloads(info, recovery_done, update_recovery))
+    recovery_done = threading.Event()
+    # dl_task = asyncio.create_task(do_downloads(info, recovery_done, update_recovery))
+
+    dl_thread = threading.Thread(
+        target=do_downloads, args=[info, recovery_done, update_recovery], daemon=True
+    )
+    
+    dl_thread.start()
 
     serial = await pick_device_serial()
     await adb_root(serial)
@@ -329,12 +334,12 @@ async def main():
         print("Waiting for recovery download ... ", end="", flush=True)
         await recovery_done.wait()
         print("finished.")
-        await ainput("Press Enter to continue with recovery flash")
+        input("Press Enter to continue with recovery flash")
         await adb_update_recovery(serial, info.fn_r)
         await asyncio.sleep(1)
 
     print("Waiting for OTA download ... ", end="", flush=True)
-    await dl_task
+    dl_thread.join()
     print("finished.")
     await asyncio.sleep(1)
 
@@ -346,7 +351,7 @@ async def main():
         "Received Magisk-patched boot image from phone.",
         "Next step is rebooting to recovery in adb sideload mode and install the OTA zip.",
     )
-    await ainput("Press Enter to continue")
+    input("Press Enter to continue")
 
     await adb_reboot_sideload(serial)
     print("Installing OTA zip:", info.fn)
@@ -362,7 +367,7 @@ async def main():
     await fb_install_bootimg(serial)
     print("Finished flashing boot image.")
 
-    await ainput("Press Enter to reboot to android.")
+    input("Press Enter to reboot to android.")
     await asyncio.sleep(2)
     await fb_reboot_system(serial)
 
