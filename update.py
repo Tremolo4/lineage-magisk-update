@@ -108,6 +108,8 @@ def do_downloads(
     When that's done (or immediately) set the recovery_done event.
     Then download the OTA zip."""
 
+    # TODO: verify hash after download (even if skipped)
+
     skip_ota = info.fn.is_file()
     if update_recovery:
         download_if_not_exists(info.fn_r, info.url_r)
