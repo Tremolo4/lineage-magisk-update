@@ -298,7 +298,10 @@ def main():
     print(info.fn)
     print(info.fn_r)
 
-    if query_yes_no("Do you want to update the recovery as well?") == "yes":
+    if (
+        query_yes_no("Do you want to install the latest LineageOS recovery as well?")
+        == "yes"
+    ):
         update_recovery = True
     else:
         update_recovery = False
