@@ -332,33 +332,37 @@ def main():
     print("finished.")
     time.sleep(1)
 
-    print("Extracting and patching boot image ...")
-    extract_bootimg(info.fn)
-    patch_bootimg(serial)
+    msg = "Do you want to patch the boot image with Magisk and flash it?"
+    magisk = query_yes_no(msg) == "yes"
+    if magisk:
+        print("Extracting and patching boot image ...")
+        extract_bootimg(info.fn)
+        patch_bootimg(serial)
+        print("Received Magisk-patched boot image from phone.")
 
-    print(
-        "Received Magisk-patched boot image from phone.",
-        "Next step is rebooting to recovery in adb sideload mode and install the OTA zip.",
-    )
-    input("Press Enter to continue")
-
+    input("Press Enter to reboot to adb sideload mode")
     adb_reboot_sideload(serial)
-    print("Installing OTA zip:", info.fn)
-    adb_install_update(serial, info.fn)
-    time.sleep(3)
-    print(
-        "ADB sideload command has finished.",
-        "Please enter fastboot mode now, or reboot to bootloader.",
-    )
+    msg = "Do you want to install the OTA (y) or skip this step (n)?"
+    if query_yes_no(msg) == "yes":
+        print("Installing OTA zip:", info.fn)
+        adb_install_update(serial, info.fn)
+        time.sleep(3)
+        print("ADB sideload command has finished.")
 
-    wait_for_fastboot(serial)
-    print("Flashing Magisk-patched boot image: patched-boot.img")
-    fb_install_bootimg(serial)
-    print("Finished flashing boot image.")
+    if magisk:
+        print("Next step is installing the Magisk-patched boot image.")
+        print("Please enter fastboot mode now, or reboot to bootloader.")
+        wait_for_fastboot(serial)
+        print("Flashing Magisk-patched boot image: patched-boot.img")
+        fb_install_bootimg(serial)
+        print("Finished flashing boot image.")
+        time.sleep(2)
+        if query_yes_no("Do you want to reboot to android?") == "yes":
+            fb_reboot_system(serial)
 
-    input("Press Enter to reboot to android.")
-    time.sleep(2)
-    fb_reboot_system(serial)
+    # TODO: if not in fastboot, reboot with adb
+
+    print("All done!")
 
     Path("boot.img").unlink(True)
     Path("patched-boot.img").unlink(True)
