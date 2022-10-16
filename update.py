@@ -75,10 +75,11 @@ class DownloadResult:
 
 
 def get_newest_build_info():
-    res = urllib.request.urlopen(
+    with urllib.request.urlopen(
         f"{LINEAGEOS_DOWNLOADS}/api/v1/{DEVICE}/nightly/yaddayadda"
-    )
-    data = json.loads(res.read())
+    ) as res:
+        text = res.read()
+    data = json.loads(text)
     newest = sorted(data["response"], key=lambda build: build["datetime"])[-1]
 
     info = BuildInfo(
