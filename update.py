@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import hashlib
 import json
 import re
 import shutil
@@ -6,11 +7,14 @@ import subprocess
 import threading
 import time
 import zipfile
+from datetime import date
 from pathlib import Path
 import urllib.request
+import urllib.parse
 
-LINEAGEOS_DOWNLOADS = "https://mirrorbits.lineageos.org"
+LINEAGEOS_DOWNLOADS = "https://download.lineageos.org"
 DEVICE = "beryllium"
+RECOVERY_URL_TEMPLATE = "https://mirrorbits.lineageos.org/recovery/{device}/{date}/lineage-{version}-{date}-recovery-{device}.img"
 
 
 @dataclass(frozen=True)
@@ -58,21 +62,44 @@ class BuildInfo:
     date: str
     fn: Path
     url: str
+    sha256: str
     fn_r: Path
     url_r: str
+    sha256_r: str
+
+
+@dataclass
+class DownloadResult:
+    successful: bool = False
+    successful_r: bool = False
 
 
 def get_newest_build_info():
-    res = urllib.request.urlopen(f"{LINEAGEOS_DOWNLOADS}/api/v1/builds/{DEVICE}")
-    data = json.loads(res.read())
-    newest = sorted(data[DEVICE], key=lambda build: build["datetime"])[-1]
-    info = BuildInfo(
-        date=newest["date"],
-        fn=newest["filename"],
-        url=LINEAGEOS_DOWNLOADS + newest["filepath"],
-        fn_r=newest["recovery"]["filename"],
-        url_r=LINEAGEOS_DOWNLOADS + newest["recovery"]["filepath"],
+    res = urllib.request.urlopen(
+        f"{LINEAGEOS_DOWNLOADS}/api/v1/{DEVICE}/nightly/yaddayadda"
     )
+    data = json.loads(res.read())
+    newest = sorted(data["response"], key=lambda build: build["datetime"])[-1]
+
+    info = BuildInfo(
+        date=date.fromtimestamp(int(newest["datetime"])).strftime("%Y%m%d"),
+        fn=newest["filename"],
+        url=newest["url"],
+        sha256=newest["id"],
+        fn_r=None,
+        url_r=None,
+        sha256_r=None,
+    )
+
+    # sadly the api does not inform about recovery
+    # get recovery info by assembling url with the same date as the ota, get hash with <url>?sha256
+    info.url_r = RECOVERY_URL_TEMPLATE.format(
+        device=DEVICE, date=info.date, version=newest["version"]
+    )
+    info.fn_r = Path(urllib.parse.unquote(urllib.parse.urlparse(info.url_r).path)).name
+    with urllib.request.urlopen(info.url_r + "?sha256") as response:
+        text = response.read().decode(response.headers.get_content_charset())
+    info.sha256_r = text[:64]
 
     if info.fn != Path(info.fn).name or info.fn_r != Path(info.fn_r).name:
         raise RuntimeError(
@@ -83,6 +110,15 @@ def get_newest_build_info():
     info.fn_r = Path(info.fn_r)
 
     return info
+
+
+def verify_sha256(path: Path, hash: str):
+    BLOCK_SIZE = 8388608
+    hasher = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(BLOCK_SIZE):
+            hasher.update(chunk)
+    return hash == hasher.hexdigest()
 
 
 def download_file(fn, url):
@@ -103,20 +139,25 @@ def do_downloads(
     info: BuildInfo,
     recovery_done: threading.Event,
     update_recovery: bool,
+    result: DownloadResult,
 ):
     """Download recovery image, if update_recovery is True.
     When that's done (or immediately) set the recovery_done event.
     Then download the OTA zip."""
 
-    # TODO: verify hash after download (even if skipped)
-
     skip_ota = info.fn.is_file()
     if update_recovery:
         download_if_not_exists(info.fn_r, info.url_r)
+        result.successful_r = verify_sha256(info.fn_r, info.sha256_r)
+        if not result.successful_r:
+            recovery_done.set()
+            # don't proceed with ota download
+            return
     recovery_done.set()
 
     if not skip_ota:
         download_if_not_exists(info.fn, info.url)
+    result.successful = verify_sha256(info.fn, info.sha256)
 
 
 def pick_device_serial():
@@ -311,8 +352,11 @@ def main():
         "Note that if a file already exists, the download will be silently skipped.",
     )
     recovery_done = threading.Event()
+    dl_res = DownloadResult()
     dl_thread = threading.Thread(
-        target=do_downloads, args=[info, recovery_done, update_recovery], daemon=True
+        target=do_downloads,
+        args=[info, recovery_done, update_recovery, dl_res],
+        daemon=True,
     )
     dl_thread.start()
 
@@ -323,6 +367,12 @@ def main():
         print("Waiting for recovery download ... ", end="", flush=True)
         recovery_done.wait()
         print("finished.")
+        if not dl_res.successful_r:
+            print("SHA256 verification of recovery image failed!")
+            print("Downloaded file is apparently corrupt. Aborting.")
+            exit()
+        else:
+            print("SHA256 verified successfully.")
         input("Press Enter to continue with recovery flash")
         adb_update_recovery(serial, info.fn_r)
         time.sleep(1)
@@ -330,7 +380,12 @@ def main():
     print("Waiting for OTA download ... ", end="", flush=True)
     dl_thread.join()
     print("finished.")
-    time.sleep(1)
+    if not dl_res.successful:
+        print("SHA256 verification of OTA zip failed!")
+        print("Downloaded file is apparently corrupt. Aborting.")
+        exit()
+    else:
+        print("SHA256 verified successfully.")
 
     msg = "Do you want to patch the boot image with Magisk and flash it?"
     magisk = query_yes_no(msg) == "yes"
