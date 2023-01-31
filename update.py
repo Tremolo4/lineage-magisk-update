@@ -199,9 +199,9 @@ def check_call(args: "list", capture_stdout=False, capture_stderr=False):
         check=True,
     )
     stdout, stderr = None, None
-    if proc.stdout is not None:
+    if capture_stdout:
         stdout = proc.stdout.decode("utf-8")
-    if proc.stderr is not None:
+    if capture_stderr:
         stderr = proc.stderr.decode("utf-8")
     return stdout, stderr
 
@@ -413,7 +413,7 @@ def main():
         fb_install_bootimg(serial)
         print("Finished flashing boot image.")
         time.sleep(2)
-        if query_yes_no("Do you want to reboot to android?") == "yes":
+        if query_yes_no("Reboot to system (using fastboot)?") == "yes":
             fb_reboot_system(serial)
 
     # TODO: if not in fastboot, reboot with adb
