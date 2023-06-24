@@ -172,11 +172,11 @@ def pick_device_serial():
 
         for line in stdout.splitlines():
             line = line.strip()
-            if m := re.match(r"([0-9a-f]+)\tdevice", line):
+            if m := re.match(r"([0-9a-f]+)\s+device", line):
                 print(f"ADB found device with serial {m.group(1)}")
                 if query_yes_no("Is that the correct device?") == "yes":
                     return m.group(1)
-            elif m := re.match(r"([0-9a-f]+)\tunauthorized", line):
+            elif m := re.match(r"([0-9a-f]+)\s+unauthorized", line):
                 print(
                     f"ADB found unauthorized device with serial {m.group(1)}.",
                     "Make sure to confirm ADB authorization from this computer.",
@@ -278,7 +278,7 @@ def adb_reboot_sideload(serial):
 
         for line in stdout.splitlines():
             line = line.strip()
-            if re.match(f"{serial}\tsideload", line):
+            if re.match(serial + r"\s+sideload", line):
                 return
 
 
@@ -301,7 +301,7 @@ def wait_for_fastboot(serial):
 
         for line in stdout.splitlines():
             line = line.strip()
-            if re.match(f"{serial}\tfastboot", line):
+            if re.match(serial + r"\s+fastboot", line):
                 return
 
         # wait at least 3 seconds between ADB calls
