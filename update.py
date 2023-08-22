@@ -14,7 +14,6 @@ import urllib.parse
 
 LINEAGEOS_DOWNLOADS = "https://download.lineageos.org"
 DEVICE = "beryllium"
-RECOVERY_URL_TEMPLATE = "https://mirrorbits.lineageos.org/recovery/{device}/{date}/lineage-{version}-{date}-recovery-{device}.img"
 
 
 @dataclass(frozen=True)
@@ -76,31 +75,38 @@ class DownloadResult:
 
 def get_newest_build_info():
     with urllib.request.urlopen(
-        f"{LINEAGEOS_DOWNLOADS}/api/v1/{DEVICE}/nightly/yaddayadda"
+        f"{LINEAGEOS_DOWNLOADS}/api/v2/devices/{DEVICE}/builds"
     ) as res:
         text = res.read()
     data = json.loads(text)
-    newest = sorted(data["response"], key=lambda build: build["datetime"])[-1]
+
+    newest = data[0]
 
     info = BuildInfo(
         date=date.fromtimestamp(int(newest["datetime"])).strftime("%Y%m%d"),
-        fn=newest["filename"],
-        url=newest["url"],
-        sha256=newest["id"],
+        fn=None,
+        url=None,
+        sha256=None,
         fn_r=None,
         url_r=None,
         sha256_r=None,
     )
 
-    # sadly the api does not inform about recovery
-    # get recovery info by assembling url with the same date as the ota, get hash with <url>?sha256
-    info.url_r = RECOVERY_URL_TEMPLATE.format(
-        device=DEVICE, date=info.date, version=newest["version"]
-    )
-    info.fn_r = Path(urllib.parse.unquote(urllib.parse.urlparse(info.url_r).path)).name
-    with urllib.request.urlopen(info.url_r + "?sha256") as response:
-        text = response.read().decode(response.headers.get_content_charset())
-    info.sha256_r = text[:64]
+    for file in newest["files"]:
+        if file["filename"] == "recovery.img":
+            info.fn_r = f"recovery-{info.date}.img"
+            info.url_r = file["url"]
+            info.sha256_r = file["sha256"]
+        elif (
+            file["filename"].startswith("lineage")
+            and file["filename"].endswith(".zip")
+            and file["type"] == "nightly"
+        ):
+            info.fn = file["filename"]
+            info.url = file["url"]
+            info.sha256 = file["sha256"]
+
+    print(info)
 
     if info.fn != Path(info.fn).name or info.fn_r != Path(info.fn_r).name:
         raise RuntimeError(
