@@ -411,6 +411,11 @@ def main():
         time.sleep(3)
         print("ADB sideload command has finished.")
 
+    print(
+        "If you want to install a GApps package, do so now manually with adb sideload"
+    )
+    input("Press Enter when you're done")
+
     if magisk:
         print("Next step is installing the Magisk-patched boot image.")
         print("Please enter fastboot mode now, or reboot to bootloader.")
